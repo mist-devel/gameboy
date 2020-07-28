@@ -21,11 +21,12 @@
 
 module gb (
    input reset,
-   input clk,
-   input clk2x,
+   
+	input clk_sys,
+	input ce,
+	input ce_2x,
 
 	input fast_boot,
-	input [7:0] joystick,
 	input isGBC,
 	input isGBC_game,
 
@@ -50,8 +51,24 @@ module gb (
 	output [14:0] lcd_data,
 	output [1:0] lcd_mode,
 	output lcd_on,
+
+	output [1:0] joy_p54,
+	input  [3:0] joy_din,
 	
-	output speed   //GBC
+	output speed,   //GBC
+	
+	input          gg_reset,
+	input          gg_en,
+	input  [128:0] gg_code,
+	output         gg_available,
+
+	//serial port
+	input   serial_ena,
+	output sc_int_clock2,
+	input serial_clk_in,
+	output serial_clk_out,
+	input  serial_data_in,
+	output serial_data_out
 );
 
 // include cpu
@@ -69,17 +86,17 @@ wire sel_cram = cpu_addr[15:13] == 3'b101;           // 8k cart ram at $a000
 wire sel_vram = cpu_addr[15:13] == 3'b100;           // 8k video ram at $8000
 wire sel_ie   = cpu_addr == 16'hffff;                // interupt enable
 wire sel_if   = cpu_addr == 16'hff0f;                // interupt flag
-wire sel_iram = (cpu_addr[15:14] == 2'b11) && (cpu_addr[15:8] != 8'hff); // 8k internal ram at $c000
+wire sel_iram = (cpu_addr[15:14] == 2'b11) && (~&cpu_addr[13:9]); // 8k internal ram at $C000-DFFF. C000-DDFF mirrored to E000-FDFF
 wire sel_zpram = (cpu_addr[15:7] == 9'b111111111) && // 127 bytes zero pageram at $ff80
 					 (cpu_addr != 16'hffff);
-wire sel_audio = (cpu_addr[15:8] == 8'hff) &&        // audio reg ff10 - ff3f
-					((cpu_addr[7:5] == 3'b001) || (cpu_addr[7:4] == 4'b0001));
+wire sel_audio = (cpu_addr[15:8] == 8'hff) &&        // audio reg ff10 - ff3f and ff76/ff77 PCM12/PCM34 (undocumented registers)
+					((cpu_addr[7:5] == 3'b001) || (cpu_addr[7:4] == 4'b0001) || (cpu_addr[7:0] == 8'h76) || (cpu_addr[7:0] == 8'h77));
 					
 //DMA can select from $0000 to $F100					
 wire dma_sel_rom = !dma_addr[15];                       // lower 32k are rom
 wire dma_sel_cram = dma_addr[15:13] == 3'b101;           // 8k cart ram at $a000
 wire dma_sel_vram = dma_addr[15:13] == 3'b100;           // 8k video ram at $8000
-wire dma_sel_iram = (dma_addr[15:14] == 2'b11) && (dma_addr[15:8] != 8'hff); // 8k internal ram at $c000
+wire dma_sel_iram = (dma_addr[15:8] >= 8'hC0 && dma_addr[15:8] <= 8'hF1); // 8k internal ram at $c000
 
 //CGB
 wire sel_vram_bank = (cpu_addr==16'hff4f);
@@ -111,7 +128,7 @@ wire [7:0] cpu_di =
 	   isGBC&&sel_hdma?{hdma_do}:  //hdma GBC
 	   isGBC&&sel_key1?{cpu_speed,6'h3f,prepare_switch}: //key1 cpu speed register(GBC)
 		sel_joy?joy_do:         // joystick register
-		sel_sb?8'hFF:				// serial transfer data register
+		sel_sb?sb:				// serial transfer data register
 		sel_sc?sc_r:				// serial transfer control register
 		sel_timer?timer_do:     // timer registers
 		sel_video_reg?video_do: // video registers
@@ -131,53 +148,74 @@ wire cpu_iorq_n;
 wire cpu_m1_n;
 wire cpu_mreq_n;
 
-wire cpu_clken = isGBC ? !hdma_active:1'b1;  //when hdma is enabled stop CPU (GBC)
+wire ce_cpu = cpu_speed?ce_2x:ce;
+wire cpu_clken = ce_cpu & (isGBC ? !hdma_active:1'b1);  //when hdma is enabled stop CPU (GBC)
+wire clk_cpu = ce_cpu;
+
 wire cpu_stop;
-	
+
 GBse cpu (
 	.RESET_n    ( !reset        ),
-	.CLK_n      ( clk_cpu       ),
+	.CLK_n      ( clk_sys       ),
 	.CLKEN      ( cpu_clken     ),
 	.WAIT_n     ( 1'b1          ),
 	.INT_n      ( irq_n         ),
 	.NMI_n      ( 1'b1          ),
 	.BUSRQ_n    ( 1'b1          ),
-   .M1_n       ( cpu_m1_n      ),
-   .MREQ_n     ( cpu_mreq_n    ),
-   .IORQ_n     ( cpu_iorq_n    ),
-   .RD_n       ( cpu_rd_n      ),
-   .WR_n       ( cpu_wr_n      ),
-   .RFSH_n     (               ),
-   .HALT_n     (               ),
-   .BUSAK_n    (               ),
-   .A          ( cpu_addr      ),
-   .DI         ( cpu_di        ),
-   .DO         ( cpu_do        ),
+	.M1_n       ( cpu_m1_n      ),
+	.MREQ_n     ( cpu_mreq_n    ),
+	.IORQ_n     ( cpu_iorq_n    ),
+	.RD_n       ( cpu_rd_n      ),
+	.WR_n       ( cpu_wr_n      ),
+	.RFSH_n     (               ),
+	.HALT_n     (               ),
+	.BUSAK_n    (               ),
+	.A          ( cpu_addr      ),
+	.DI         ( genie_ovr ? genie_data : cpu_di),
+	.DO         ( cpu_do        ),
 	.STOP       ( cpu_stop      )
 );
 
 // --------------------------------------------------------------------
+// --------------------------- Cheat Engine ---------------------------
+// --------------------------------------------------------------------
+
+wire genie_ovr;
+wire [7:0] genie_data;
+/*
+CODES codes (
+	.clk        (clk_sys),
+	.reset      (gg_reset),
+	.enable     (gg_en),
+	.addr_in    (cpu_addr),
+	.data_in    (cpu_di),
+	.available  (gg_available),
+	.code       (gg_code),
+	.genie_ovr  (genie_ovr),
+	.genie_data (genie_data)
+);
+*/
+
+// --------------------------------------------------------------------
 // --------------------- Speed Toggle KEY1 (GBC)-----------------------
 // --------------------------------------------------------------------
-wire clk_cpu = cpu_speed?clk2x:clk;
-//wire clk_cpu = clk;
 reg cpu_speed; // - 0 Normal mode (4MHz) - 1 Double Speed Mode (8MHz)
 reg prepare_switch; // set to 1 to toggle speed
 assign speed = cpu_speed;
 
-always @(posedge clk2x) begin
+always @(posedge clk_sys) begin
    if(reset) begin
-			cpu_speed <= 1'b0;
-			prepare_switch <= 1'b0;
-	end else if (sel_key1 && !cpu_wr_n && isGBC)begin
+		cpu_speed <= 1'b0;
+		prepare_switch <= 1'b0;
+	end
+	else if (ce_2x && sel_key1 && !cpu_wr_n && isGBC)begin
 		prepare_switch <= cpu_do[0];
 	end
 	
-	if (isGBC && prepare_switch && cpu_stop) begin
+	if (ce_2x && isGBC && prepare_switch && cpu_stop) begin
 		cpu_speed <= !cpu_speed;
 		prepare_switch <= 1'b0;
 	end
-	
 end
 
 // --------------------------------------------------------------------
@@ -189,42 +227,83 @@ wire audio_wr = !cpu_wr_n && sel_audio;
 wire [7:0] audio_do;
 
 gbc_snd audio (
-	.clk				( clk2x 				),
-	.reset			( reset				),
+	.clk          ( clk_sys       ),
+	.ce           ( ce_2x         ),
+	.reset        ( reset         ),
 
-	.s1_read  		( audio_rd  		),
-	.s1_write 		( audio_wr  		),
-	.s1_addr    	( cpu_addr[5:0]	),
-   .s1_readdata 	( audio_do        ),
-	.s1_writedata  ( cpu_do       	),
+	.is_gbc       ( isGBC         ),
 
-   .snd_left 		( audio_l  			),
-	.snd_right  	( audio_r  			)
+	.s1_read      ( audio_rd      ),
+	.s1_write     ( audio_wr  		),
+	.s1_addr      ( cpu_addr[6:0]	),
+	.s1_readdata  ( audio_do      ),
+	.s1_writedata ( cpu_do       	),
+
+	.snd_left 		( audio_l       ),
+	.snd_right  	( audio_r       )
 );
 
 // --------------------------------------------------------------------
-// -----------------------serial port(dummy)---------------------------
+// -----------------------serial port()--------------------------------
 // --------------------------------------------------------------------
 
-reg [3:0] serial_counter;
-reg sc_start,sc_shiftclock;
+wire serial_irq    = serial_ena ? serial_irq_s    : serial_irq_f;
+wire [7:0] sb      = serial_ena ? sb_s            : 8'hFF;
+wire sc_start      = serial_ena ? sc_start_s      : sc_start_f;
+wire sc_shiftclock = serial_ena ? sc_shiftclock_s : sc_shiftclock_f;
 
-reg serial_irq;
-reg [8:0] serial_clk_div; //8192Hz
+// SNAC
+wire serial_irq_s;
+wire [7:0] sb_s;
+wire sc_start_s;
+wire sc_shiftclock_s;
+
+assign sc_int_clock2 = sc_shiftclock;
+
+link link (
+  .clk(clk_cpu),
+  .rst(reset),
+
+  .sel_sc(sel_sc),
+  .sel_sb(sel_sb),
+  .cpu_wr_n(cpu_wr_n),
+  .sc_start_in(cpu_do[7]),
+  .sc_int_clock_in(cpu_do[0]),
+
+  .sb_in(cpu_do),
+
+  .serial_clk_in(serial_clk_in),
+  .serial_data_in(serial_data_in),
+
+  .serial_clk_out(serial_clk_out),
+  .serial_data_out(serial_data_out),
+  .sb(sb_s),
+  .serial_irq(serial_irq_s),
+  .sc_start(sc_start_s),
+  .sc_int_clock(sc_shiftclock_s)
+
+);
+
+// Fake
+reg sc_start_f,sc_shiftclock_f;
+reg serial_irq_f;
 
 always @(posedge clk_cpu) begin
-	serial_irq <= 1'b0;
+	reg [3:0] serial_counter;
+	reg [8:0] serial_clk_div; //8192Hz
+
+	serial_irq_f <= 1'b0;
    if(reset) begin
-		  sc_start <= 1'b0;
-		  sc_shiftclock <= 1'b0;
+		  sc_start_f <= 1'b0;
+		  sc_shiftclock_f <= 1'b0;
 	end else if (sel_sc && !cpu_wr_n) begin	 //cpu write
-		sc_start <= cpu_do[7];
-		sc_shiftclock <= cpu_do[0];
+		sc_start_f <= cpu_do[7];
+		sc_shiftclock_f <= cpu_do[0];
 		if (cpu_do[7]) begin 						//enable transfer
 			serial_clk_div <= 9'h1FF;
 			serial_counter <= 4'd8;
 		end 
-	end else if (sc_start && sc_shiftclock) begin // serial transfer and serial clock enabled
+	end else if (sc_start_f && sc_shiftclock_f) begin // serial transfer and serial clock enabled
 		
 		serial_clk_div <= serial_clk_div - 9'd1;
 		
@@ -232,8 +311,8 @@ always @(posedge clk_cpu) begin
 				serial_counter <= serial_counter - 4'd1;
 		
 		if (!serial_counter) begin
-			serial_irq <= 1'b1; 	//trigger interrupt
-			sc_start <= 1'b0; 	//reset transfer state
+			serial_irq_f <= 1'b1; 	//trigger interrupt
+			sc_start_f <= 1'b0; 	//reset transfer state
 			serial_clk_div <= 9'h1FF;
 		   serial_counter <= 4'd8;
 		end	
@@ -242,22 +321,19 @@ always @(posedge clk_cpu) begin
 	
 end
 
-			
-
 // --------------------------------------------------------------------
 // ------------------------------ inputs ------------------------------
 // --------------------------------------------------------------------
 
-wire [3:0] joy_p4 = ~{ joystick[2], joystick[3], joystick[1], joystick[0] } | {4{p54[0]}};
-wire [3:0] joy_p5 = ~{ joystick[7], joystick[6], joystick[5], joystick[4] } | {4{p54[1]}};
 reg  [1:0] p54;
 
 always @(posedge clk_cpu) begin
-	if(reset) p54 <= 2'b00;
+	if(reset) p54 <= 2'b11;
 	else if(sel_joy && !cpu_wr_n)	p54 <= cpu_do[5:4];
 end
 
-wire [7:0] joy_do = { 2'b11, p54, joy_p4 & joy_p5 };
+wire [7:0] joy_do = { 2'b11, p54, joy_din };
+assign joy_p54 = p54;
 
 // --------------------------------------------------------------------
 // ---------------------------- interrupts ----------------------------
@@ -280,13 +356,15 @@ wire [7:0] irq_vec =
 
 //wire vs = (lcd_mode == 2'b01);
 //reg vsD, vsD2;
-reg [7:0] inputD, inputD2;
+reg [3:0] inputD, inputD2;
 
 // irq is low when an enable irq is active
 wire irq_n = !(ie_r & if_r);
 
 reg [4:0] if_r;
 reg [4:0] ie_r; // writing  $ffff sets the irq enable mask
+
+reg old_vblank_irq, old_video_irq, old_timer_irq, old_serial_irq;
 always @(negedge clk_cpu) begin //negedge to trigger interrupt earlier
 	reg old_ack = 0;
 	
@@ -295,22 +373,26 @@ always @(negedge clk_cpu) begin //negedge to trigger interrupt earlier
 		if_r <= 5'h00;
 	end
 
-	// rising edge on vs
-//	vsD <= vs;
-//	vsD2 <= vsD;
-	if(vblank_irq) if_r[0] <= 1'b1;
+    // "When an interrupt signal changes from low to high,
+    //  then the corresponding bit in the IF register becomes set."
+    old_vblank_irq <= vblank_irq;
+	if(~old_vblank_irq & vblank_irq) if_r[0] <= 1'b1;
 
 	// video irq already is a 1 clock event
-	if(video_irq) if_r[1] <= 1'b1;
+    old_video_irq <= video_irq;
+	if(~old_video_irq & video_irq) if_r[1] <= 1'b1;
 	
 	// timer_irq already is a 1 clock event
-	if(timer_irq) if_r[2] <= 1'b1;
+    old_timer_irq <= timer_irq;
+	if(~old_timer_irq & timer_irq) if_r[2] <= 1'b1;
 	
 	// serial irq already is a 1 clock event
-	if(serial_irq) if_r[3] <= 1'b1;
+    old_serial_irq <= serial_irq;
+	if(~old_serial_irq & serial_irq) if_r[3] <= 1'b1;
 
 	// falling edge on any input line P10..P13
-	inputD <= {joy_p4, joy_p5};
+
+	inputD <= joy_din;
 	inputD2 <= inputD;
 	if(~inputD & inputD2) if_r[4] <= 1'b1;
 
@@ -368,11 +450,11 @@ wire [7:0] dma_data = dma_sel_iram?iram_do:dma_sel_vram?(isGBC&&vram_bank)?vram1
 
 
 video video (
-	.reset	    ( reset         ),
-	.clk		    ( clk           ),
-	.clk_reg     ( clk_cpu       ),   //can be 2x in cgb double speed mode
+	.reset       ( reset         ),
+	.clk         ( clk_sys       ),
+	.ce          ( ce            ),   // 4Mhz
+	.ce_cpu      ( ce_cpu        ),   //can be 2x in cgb double speed mode
 	.isGBC       ( isGBC         ),
-
 	.isGBC_game  ( isGBC_game|boot_rom_enabled ),  //enable GBC mode during bootstrap rom
 
 	.irq         ( video_irq     ),
@@ -460,7 +542,8 @@ wire hdma_active;
 
 hdma hdma(
 	.reset	          ( reset         ),
-	.clk		          ( clk2x         ),
+	.clk		          ( clk_sys       ),
+	.ce                ( ce_cpu         ),
 	.speed				 ( cpu_speed     ),
 	
 	// cpu register interface
@@ -541,7 +624,7 @@ end
 
 // writing 01(GB) or 11(GBC) to $ff50 disables the internal rom
 reg boot_rom_enabled;
-always @(posedge clk) begin
+always @(posedge clk_sys) begin
 	if(reset)
 		boot_rom_enabled <= 1'b1;
 	else if((cpu_addr == 16'hff50) && !cpu_wr_n)
@@ -556,7 +639,7 @@ wire [7:0] rom_do = isGBC? //GameBoy Color?
                         ((cpu_addr[14:9] == 6'h00) || (hdma_rd&& hdma_source_addr[14:9] == 6'h00))? cart_do:                                 //100-1FF Cart Header
                         (((cpu_addr[14:12] == 3'h0) || (hdma_rd&& hdma_source_addr[14:12] == 3'h0)) && boot_rom_enabled)?gbc_bios_do:        //200-8FF bootrom 2nd part
                         cart_do:                                                            //rest of card
-                    ((cpu_addr[14:8] == 7'h00) && boot_rom_enabled)?boot_rom_do:cart_do;    //GB
+                    ((cpu_addr[14:8] == 7'h00) && boot_rom_enabled)?fast_boot?fast_boot_rom_do:boot_rom_do:cart_do;    //GB
 
 
 wire is_dma_cart_addr = (dma_sel_rom || dma_sel_cram); //rom or external ram
@@ -571,9 +654,16 @@ assign gbc_bios_addr = hdma_rd?hdma_source_addr[11:0]:cpu_addr[11:0];
 
 wire [7:0] boot_rom_do;
 boot_rom boot_rom (
-	.address ( cpu_addr[7:0] ),
-	.clock   ( clk           ),
-	.q       ( boot_rom_do   )
+	.addr    ( cpu_addr[7:0] ),
+	.clk     ( clk_sys       ),
+	.data    ( boot_rom_do   )
+);
+
+wire [7:0] fast_boot_rom_do;
+fast_boot_rom fast_boot_rom (
+	.addr    ( cpu_addr[7:0] ),
+	.clk     ( clk_sys       ),
+	.data    ( fast_boot_rom_do )
 );
 
 endmodule

@@ -295,7 +295,7 @@ wire [8:0] rom_mask =                            // 0 - 2 banks, 32k direct mapp
 			(cart_rom_size == 82)?9'b001111111:  //$52 - 72 banks = 1.1M
 			(cart_rom_size == 83)?9'b001111111:  //$53 - 80 banks = 1.2M
 			(cart_rom_size == 84)?9'b001111111:
-                                  9'b001111111;  //$54 - 96 banks = 1.5M// RAM size
+			                      9'b001111111;  //$54 - 96 banks = 1.5M// RAM size
 
 // MBC types
 // 0 - none
@@ -378,16 +378,25 @@ gbc_bios gbc_bios (
 	.q			( bios_do      )
 );
 
+wire [1:0] joy_p54;
+wire [3:0] joy_p4 = ~{ joystick[2], joystick[3], joystick[1], joystick[0] } | {4{joy_p54[0]}};
+wire [3:0] joy_p5 = ~{ joystick[7], joystick[6], joystick[5], joystick[4] } | {4{joy_p54[1]}};
+
+wire [7:0] joy_do = { 2'b11, joy_p54, joy_p4 & joy_p5 };
+
 // the gameboy itself
 gb gb (
 	.reset	    ( reset        ),
-	.clk        ( clk4         ),   // the whole gameboy runs on 4mhnz
-	.clk2x      ( clk8         ),
+	.clk_sys    ( clk64        ),
+	.ce         ( clk4         ),
+	.ce_2x      ( clk8         ),
 
 	.fast_boot   ( status[2]   ),
-	.joystick    ( joystick    ),
 	.isGBC       ( isGBC       ),
 	.isGBC_game  ( isGBC_game  ),
+
+	.joy_p54     ( joy_p54     ),
+	.joy_din     ( joy_do      ),
 
 	// interface to the "external" game cartridge
 	.cart_addr   ( cart_addr   ),
@@ -437,7 +446,7 @@ lcd lcd (
 	 .mode   ( lcd_mode   ),  // used to detect begin of new lines and frames
 	 .on     ( lcd_on     ),
 	 
-  	 .hs    ( video_hs    ),
+	 .hs    ( video_hs    ),
 	 .vs    ( video_vs    ),
 	 .r     ( video_r     ),
 	 .g     ( video_g     ),
