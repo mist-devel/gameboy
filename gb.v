@@ -365,7 +365,7 @@ reg [4:0] if_r;
 reg [4:0] ie_r; // writing  $ffff sets the irq enable mask
 
 reg old_vblank_irq, old_video_irq, old_timer_irq, old_serial_irq;
-always @(negedge clk_cpu) begin //negedge to trigger interrupt earlier
+always @(posedge clk_cpu) begin
 	reg old_ack = 0;
 	
 	if(reset) begin
