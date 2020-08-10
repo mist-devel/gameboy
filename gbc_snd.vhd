@@ -231,7 +231,7 @@ begin
         variable wav_trigger_cnt : unsigned(3 downto 0);
         variable wave_index_write : std_logic_vector(3 downto 0);
     begin
-
+      if rising_edge(clk) then
         -- Registers
         if reset = '1' then
             -- Reset register values
@@ -348,8 +348,7 @@ begin
 
             snd_enable <= '0';
 
-        elsif rising_edge(clk) then
-            if ce = '1' then
+        elsif ce = '1' then
                 
                 -- TODO: align wav and noi triggers                 
                 if en_snd2 then             
