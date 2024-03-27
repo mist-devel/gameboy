@@ -20,7 +20,7 @@
 //
 
 module gb_mist (
-   input [1:0] CLOCK_27,
+   input         CLOCK_27,
 	
  	output LED,
 	
@@ -139,13 +139,13 @@ sdram sdram (
 // TODO: ds for cart ram write
 wire [1:0] sdram_ds = dio_download?2'b11:{!cart_addr[0], cart_addr[0]};
 wire [15:0] sdram_do;
-wire [15:0] sdram_di = dio_download?dio_data:{cart_di, cart_di};
-wire [23:0] sdram_addr = dio_download?dio_addr:{1'b0, mbc_bank, cart_addr[12:1]};
+wire [15:0] sdram_di = dio_download?{dio_data[7:0], dio_data[15:8]}:{cart_di, cart_di};
+wire [23:0] sdram_addr = dio_download?dio_addr[24:1]:{1'b0, mbc_bank, cart_addr[12:1]};
 wire sdram_oe = !dio_download && cart_rd;
 wire sdram_we = (dio_download && dio_write) || (!dio_download && cart_ram_wr);
 
 wire dio_download;
-wire [23:0] dio_addr;
+wire [24:0] dio_addr;
 wire [15:0] dio_data;
 wire dio_write;
 wire [7:0] dio_index;
@@ -327,17 +327,17 @@ always @(posedge clk64) begin
 	end else begin
 		if(dio_download && dio_write) begin
 			// cart is stored in 16 bit wide sdram, so addresses are shifted right
-			case(dio_addr)
-				24'ha1: cart_cgb_flag <= dio_data[7:0];               // $143
-				24'ha3: cart_mbc_type <= dio_data[7:0];               // $147
-				24'ha4: { cart_rom_size, cart_ram_size } <= dio_data; // $148/$149
+			case(dio_addr[24:1])
+				24'ha1: cart_cgb_flag <= dio_data[15:8];               // $143
+				24'ha3: cart_mbc_type <= dio_data[15:8];               // $147
+				24'ha4: { cart_ram_size, cart_rom_size } <= dio_data; // $148/$149
 			endcase
 		end
 	end
 end
 
 // include ROM download helper
-data_io data_io (
+data_io #(.DOUT_16(1'b1)) data_io (
    .clk_sys ( clk64     ),
    // io controller spi interface
    .SPI_SCK ( SPI_SCK ),
@@ -347,7 +347,7 @@ data_io data_io (
    .ioctl_download ( dio_download ),  // signal indicating an active rom download
 
    // external ram interface
-   .ioctl_clkref ( clk8      ),
+   .clkref_n     ( ~clk8     ),
    .ioctl_index  ( dio_index ),
    .ioctl_wr     ( dio_write ),
    .ioctl_addr   ( dio_addr  ),
@@ -490,7 +490,7 @@ end
 wire pll_locked;
 wire clk64;
 pll pll (
-	 .inclk0(CLOCK_27[0]),
+	 .inclk0(CLOCK_27),
 	 .c0(clk64),        // 4*16.777216 MHz
 	 .locked(pll_locked)
 );
