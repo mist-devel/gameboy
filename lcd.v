@@ -20,9 +20,10 @@ module lcd (
 	// VGA output
 	output reg	hs,
 	output reg 	vs,
-	output [5:0] r,
-	output [5:0] g,
-	output [5:0] b
+	output [7:0] r,
+	output [7:0] g,
+	output [7:0] b,
+	output reg  blank
 );
 
 // Mode 00:  h-blank
@@ -117,7 +118,6 @@ end
 // -------------------------------------------------------------------------------
 // ------------------------------- pixel generator -------------------------------
 // -------------------------------------------------------------------------------
-reg blank;
 reg [14:0] pixel_reg;
 reg [8:0] shift_reg_rptr;
 
@@ -138,18 +138,18 @@ end
 wire [14:0] pixel = on?pixel_reg:15'd0;
 
 // gameboy "color" palette
-wire [5:0] yellow_r = (pixel==0)?6'b100111:(pixel==1)?6'b100000:  // 1:100011
-		     (pixel==2)?6'b001100:6'b000111;
-wire [5:0] yellow_g = (pixel==0)?6'b101111:(pixel==1)?6'b101000:  // 1:101011
-		     (pixel==2)?6'b011001:6'b000100;
-wire [5:0] yellow_b = (pixel==0)?6'b000100:(pixel==1)?6'b000010:  // 1:000100
-		     (pixel==2)?6'b001100:6'b000100;
+wire [7:0] yellow_r = (pixel==0)?8'b10011100:(pixel==1)?8'b10000000:  // 1:100011
+		     (pixel==2)?8'b00110000:8'b00011100;
+wire [7:0] yellow_g = (pixel==0)?8'b10111100:(pixel==1)?8'b10100000:  // 1:101011
+		     (pixel==2)?8'b01100100:8'b00010000;
+wire [7:0] yellow_b = (pixel==0)?8'b00010000:(pixel==1)?8'b00001000:  // 1:000100
+		     (pixel==2)?8'b00110000:8'b00010000;
 
 // greyscale
-wire [5:0] grey = (pixel==0)?6'd63:(pixel==1)?6'd42:(pixel==2)?6'd24:6'd0;
+wire [7:0] grey = (pixel==0)?8'd252:(pixel==1)?8'd126:(pixel==2)?8'd96:8'd0;
 
-assign r = blank?6'b000000:isGBC ? {pixel_reg [4: 0], 1'b0} : (tint?yellow_r:grey);
-assign g = blank?6'b000000:isGBC ? {pixel_reg [9: 5], 1'b0} : (tint?yellow_g:grey);
-assign b = blank?6'b000000:isGBC ? {pixel_reg[14:10], 1'b0} : (tint?yellow_b:grey);
+assign r = blank?8'b00000000:isGBC ? {pixel_reg [4: 0], pixel_reg[ 4: 2]} : (tint?yellow_r:grey);
+assign g = blank?8'b00000000:isGBC ? {pixel_reg [9: 5], pixel_reg[ 9: 7]} : (tint?yellow_g:grey);
+assign b = blank?8'b00000000:isGBC ? {pixel_reg[14:10], pixel_reg[14:12]} : (tint?yellow_b:grey);
 
 endmodule

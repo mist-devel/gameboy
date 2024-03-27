@@ -20,43 +20,153 @@
 //
 
 module gb_mist (
-   input         CLOCK_27,
-	
- 	output LED,
-	
-   // SPI interface to arm io controller
-   output        SPI_DO,
-   input         SPI_DI,
-   input         SPI_SCK,
-   input         SPI_SS2,
-   input         SPI_SS3,
-   input         SPI_SS4,
-   input         CONF_DATA0, 
-	
-   // SDRAM interface
-   inout [15:0]    SDRAM_DQ,       // SDRAM Data bus 16 Bits
-   output [12:0]   SDRAM_A,        // SDRAM Address bus 13 Bits
-   output          SDRAM_DQML,     // SDRAM Low-byte Data Mask
-   output          SDRAM_DQMH,     // SDRAM High-byte Data Mask
-   output          SDRAM_nWE,      // SDRAM Write Enable
-   output          SDRAM_nCAS,     // SDRAM Column Address Strobe
-   output          SDRAM_nRAS,     // SDRAM Row Address Strobe
-   output          SDRAM_nCS,      // SDRAM Chip Select
-   output [1:0]    SDRAM_BA,       // SDRAM Bank Address
-   output          SDRAM_CLK,      // SDRAM Clock
-   output          SDRAM_CKE,      // SDRAM Clock Enable
+	input         CLOCK_27,
+`ifdef USE_CLOCK_50
+	input         CLOCK_50,
+`endif
 
-	// audio
-   output 			AUDIO_L,
-   output 			AUDIO_R,
+	output        LED,
+	output [VGA_BITS-1:0] VGA_R,
+	output [VGA_BITS-1:0] VGA_G,
+	output [VGA_BITS-1:0] VGA_B,
+	output        VGA_HS,
+	output        VGA_VS,
 
-	// video
-   output 			VGA_HS,
-   output 			VGA_VS,
-   output [5:0] 	VGA_R,
-   output [5:0] 	VGA_G,
-   output [5:0] 	VGA_B
+`ifdef USE_HDMI
+	output        HDMI_RST,
+	output  [7:0] HDMI_R,
+	output  [7:0] HDMI_G,
+	output  [7:0] HDMI_B,
+	output        HDMI_HS,
+	output        HDMI_VS,
+	output        HDMI_PCLK,
+	output        HDMI_DE,
+	inout         HDMI_SDA,
+	inout         HDMI_SCL,
+	input         HDMI_INT,
+`endif
+
+	input         SPI_SCK,
+	inout         SPI_DO,
+	input         SPI_DI,
+	input         SPI_SS2,    // data_io
+	input         SPI_SS3,    // OSD
+	input         CONF_DATA0, // SPI_SS for user_io
+
+`ifdef USE_QSPI
+	input         QSCK,
+	input         QCSn,
+	inout   [3:0] QDAT,
+`endif
+`ifndef NO_DIRECT_UPLOAD
+	input         SPI_SS4,
+`endif
+
+	output [12:0] SDRAM_A,
+	inout  [15:0] SDRAM_DQ,
+	output        SDRAM_DQML,
+	output        SDRAM_DQMH,
+	output        SDRAM_nWE,
+	output        SDRAM_nCAS,
+	output        SDRAM_nRAS,
+	output        SDRAM_nCS,
+	output  [1:0] SDRAM_BA,
+	output        SDRAM_CLK,
+	output        SDRAM_CKE,
+
+`ifdef DUAL_SDRAM
+	output [12:0] SDRAM2_A,
+	inout  [15:0] SDRAM2_DQ,
+	output        SDRAM2_DQML,
+	output        SDRAM2_DQMH,
+	output        SDRAM2_nWE,
+	output        SDRAM2_nCAS,
+	output        SDRAM2_nRAS,
+	output        SDRAM2_nCS,
+	output  [1:0] SDRAM2_BA,
+	output        SDRAM2_CLK,
+	output        SDRAM2_CKE,
+`endif
+
+	output        AUDIO_L,
+	output        AUDIO_R,
+`ifdef I2S_AUDIO
+	output        I2S_BCK,
+	output        I2S_LRCK,
+	output        I2S_DATA,
+`endif
+`ifdef I2S_AUDIO_HDMI
+	output        HDMI_MCLK,
+	output        HDMI_BCK,
+	output        HDMI_LRCK,
+	output        HDMI_SDATA,
+`endif
+`ifdef SPDIF_AUDIO
+	output        SPDIF,
+`endif
+`ifdef USE_AUDIO_IN
+	input         AUDIO_IN,
+`endif
+	input         UART_RX,
+	output        UART_TX
+
 );
+
+`ifdef NO_DIRECT_UPLOAD
+localparam bit DIRECT_UPLOAD = 0;
+wire SPI_SS4 = 1;
+`else
+localparam bit DIRECT_UPLOAD = 1;
+`endif
+
+`ifdef USE_QSPI
+localparam bit QSPI = 1;
+assign QDAT = 4'hZ;
+`else
+localparam bit QSPI = 0;
+`endif
+
+`ifdef VGA_8BIT
+localparam VGA_BITS = 8;
+`else
+localparam VGA_BITS = 6;
+`endif
+
+`ifdef USE_HDMI
+localparam bit HDMI = 1;
+assign HDMI_RST = 1'b1;
+`else
+localparam bit HDMI = 0;
+`endif
+
+`ifdef BIG_OSD
+localparam bit BIG_OSD = 1;
+`define SEP "-;",
+`else
+localparam bit BIG_OSD = 0;
+`define SEP
+`endif
+
+`ifdef USE_AUDIO_IN
+localparam bit USE_AUDIO_IN = 1;
+`else
+localparam bit USE_AUDIO_IN = 0;
+`endif
+
+// remove this if the 2nd chip is actually used
+`ifdef DUAL_SDRAM
+assign SDRAM2_A = 13'hZZZZ;
+assign SDRAM2_BA = 0;
+assign SDRAM2_DQML = 1;
+assign SDRAM2_DQMH = 1;
+assign SDRAM2_CKE = 0;
+assign SDRAM2_CLK = 0;
+assign SDRAM2_nCS = 1;
+assign SDRAM2_DQ = 16'hZZZZ;
+assign SDRAM2_nCAS = 1;
+assign SDRAM2_nRAS = 1;
+assign SDRAM2_nWE = 1;
+`endif
 
 assign LED = ~dio_download;
 
@@ -76,15 +186,29 @@ parameter CONF_STR = {
         "T3,Reset"
 };
 
-parameter CONF_STR_LEN = 9+14+19+26+20+8;
-
 // the status register is controlled by the on screen display (OSD)
 wire [7:0] status;
 wire [1:0] buttons;
 wire       isGBC = (dio_index[7:6] == 0) || status[4];
 
+`ifdef USE_HDMI
+wire        i2c_start;
+wire        i2c_read;
+wire  [6:0] i2c_addr;
+wire  [7:0] i2c_subaddr;
+wire  [7:0] i2c_dout;
+wire  [7:0] i2c_din;
+wire        i2c_ack;
+wire        i2c_end;
+`endif
+
 // include user_io module for arm controller communication
-user_io #(.STRLEN(CONF_STR_LEN)) user_io ( 
+user_io #(
+	.STRLEN(($size(CONF_STR)>>3)),
+	.ROM_DIRECT_UPLOAD(DIRECT_UPLOAD),
+	.FEATURES(32'h0 | (BIG_OSD << 13) | (HDMI << 14))
+	)
+user_io(
       .conf_str   ( CONF_STR   ),
       .clk_sys    ( clk64      ),
       .SPI_CLK    ( SPI_SCK    ),
@@ -94,7 +218,16 @@ user_io #(.STRLEN(CONF_STR_LEN)) user_io (
 
       .status     ( status     ),
       .buttons    ( buttons    ),
-
+`ifdef USE_HDMI
+      .i2c_start  (i2c_start   ),
+      .i2c_read   (i2c_read    ),
+      .i2c_addr   (i2c_addr    ),
+      .i2c_subaddr(i2c_subaddr ),
+      .i2c_dout   (i2c_dout    ),
+      .i2c_din    (i2c_din     ),
+      .i2c_ack    (i2c_ack     ),
+      .i2c_end    (i2c_end     ),
+`endif
       .joystick_0 ( joystick_0 ),
       .joystick_1 ( joystick_1 )
 );
@@ -428,9 +561,43 @@ sigma_delta_dac dac (
 	.right		( AUDIO_R			)
 );
 
+`ifdef I2S_AUDIO
+i2s i2s (
+	.reset(1'b0),
+	.clk(clk64),
+	.clk_rate(32'd67_120_000),
+
+	.sclk(I2S_BCK),
+	.lrclk(I2S_LRCK),
+	.sdata(I2S_DATA),
+
+	.left_chan(audio_left),
+	.right_chan(audio_right)
+);
+`ifdef I2S_AUDIO_HDMI
+assign HDMI_MCLK = 0;
+always @(posedge clk64) begin
+	HDMI_BCK <= I2S_BCK;
+	HDMI_LRCK <= I2S_LRCK;
+	HDMI_SDATA <= I2S_DATA;
+end
+`endif
+`endif
+
+`ifdef SPDIF_AUDIO
+spdif spdif
+(
+	.clk_i(clk64),
+	.rst_i(reset),
+	.clk_rate_i(32'd67_120_000),
+	.spdif_o(SPDIF),
+	.sample_i({audio_right, audio_left})
+);
+`endif
+
 // the lcd to vga converter
-wire [5:0] video_r, video_g, video_b;
-wire video_hs, video_vs;
+wire [7:0] video_r, video_g, video_b;
+wire video_hs, video_vs, video_blank;
 
 lcd lcd (
 	 .clk    ( clk64      ),
@@ -450,11 +617,14 @@ lcd lcd (
 	 .vs    ( video_vs    ),
 	 .r     ( video_r     ),
 	 .g     ( video_g     ),
-	 .b     ( video_b     )
+	 .b     ( video_b     ),
+     .blank ( video_blank )
 );
 
+wire [7:0] osd_r, osd_g, osd_b;
+
 // include the on screen display
-osd #(10'd16,10'd0,4) osd (
+osd #(.OSD_X_OFFSET(10'd16),.OSD_Y_OFFSET(10'd0),.OSD_COLOR(3'd4),.BIG_OSD(BIG_OSD),.OUT_COLOR_DEPTH(8)) osd (
    .clk_sys    ( clk64       ),
 
    // spi for OSD
@@ -468,13 +638,43 @@ osd #(10'd16,10'd0,4) osd (
    .HSync      ( video_hs     ),
    .VSync      ( video_vs     ),
 
-   .R_out      ( VGA_R        ),
-   .G_out      ( VGA_G        ),
-   .B_out      ( VGA_B        )
+   .R_out      ( osd_r        ),
+   .G_out      ( osd_g        ),
+   .B_out      ( osd_b        )
 );
 
 assign VGA_HS = video_hs;
 assign VGA_VS = video_vs;
+assign VGA_R  = osd_r[7:8-VGA_BITS];
+assign VGA_G  = osd_g[7:8-VGA_BITS];
+assign VGA_B  = osd_b[7:8-VGA_BITS];
+
+`ifdef USE_HDMI
+i2c_master #(64_000_000) i2c_master (
+	.CLK         (clk64),
+	.I2C_START   (i2c_start),
+	.I2C_READ    (i2c_read),
+	.I2C_ADDR    (i2c_addr),
+	.I2C_SUBADDR (i2c_subaddr),
+	.I2C_WDATA   (i2c_dout),
+	.I2C_RDATA   (i2c_din),
+	.I2C_END     (i2c_end),
+	.I2C_ACK     (i2c_ack),
+
+	//I2C bus
+	.I2C_SCL     (HDMI_SCL),
+	.I2C_SDA     (HDMI_SDA)
+);
+
+assign HDMI_PCLK = clk64;
+assign HDMI_R = osd_r;
+assign HDMI_G = osd_g;
+assign HDMI_B = osd_b;
+assign HDMI_HS = video_hs;
+assign HDMI_VS = video_vs;
+assign HDMI_DE = ~video_blank;
+
+`endif
 
 wire clk4 = ce_cpu;
 wire clk8 = ce_pix;
