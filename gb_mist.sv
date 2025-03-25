@@ -470,12 +470,14 @@ always @(posedge clk64) begin
 end
 
 // include ROM download helper
-data_io #(.DOUT_16(1'b1)) data_io (
+data_io #(.DOUT_16(1'b1), .ROM_DIRECT_UPLOAD(DIRECT_UPLOAD)) data_io (
    .clk_sys ( clk64     ),
    // io controller spi interface
    .SPI_SCK ( SPI_SCK ),
    .SPI_SS2 ( SPI_SS2 ),
+   .SPI_SS4 ( SPI_SS4 ),
    .SPI_DI  ( SPI_DI  ),
+   .SPI_DO  ( SPI_DO  ),
 
    .ioctl_download ( dio_download ),  // signal indicating an active rom download
 
